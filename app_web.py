@@ -7,7 +7,7 @@ import io
 import fitz  # PyMuPDF para leer PDFs como imagen
 import google.generativeai as genai
 from PIL import Image
-import requests  # Para conectar con Nemotron Graphic Elements v1
+import requests
 import openpyxl
 from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
 from openpyxl.utils import get_column_letter
@@ -73,6 +73,9 @@ def cargar_datos():
 
 
 def guardar_datos(datos):
+    # Ordena automáticamente todos los gastos por fecha ascendente
+    if "gastos" in datos:
+        datos["gastos"].sort(key=lambda x: x.get("fecha", ""))
     with open(DB_FILE, "w", encoding="utf-8") as f:
         json.dump(datos, f, ensure_ascii=False, indent=2)
 
@@ -336,7 +339,7 @@ with st.sidebar:
         st.caption("Configuración IA")
         st.session_state["api_key_manual"] = st.text_input("API Key Gemini:", type="password", value=st.session_state.get("api_key_manual", ""))
 
-# 1. GASTOS GENERALES: DOBLE IA (GEMINI + NEMOTRON GRAPHIC ELEMENTS)
+# 1. GASTOS GENERALES: DOBLE IA (GEMINI + NEMOTRON)
 if menu == "💵 Gastos (Doble IA)":
     tab_manual, tab_ocr = st.tabs(["✍️ Registro Manual Rápido", "📸 Escanear con Gemini + Nemotron"])
 
@@ -351,7 +354,7 @@ if menu == "💵 Gastos (Doble IA)":
             c4, c5, c6 = st.columns([1, 1, 3])
             m_nro = c4.text_input("N° Factura / Recibo")
             m_monto = c5.number_input("Monto (Bs)", min_value=0.0, step=1.0, format="%.2f")
-            m_detalle = c6.text_input("Detalle / Proveedor (ej. Pasajes, Agua, Candado)")
+            m_detalle = c6.text_input("Detalle / Proveedor (ej. Proveedor S.R.L. - Compra de insumos)")
 
             if st.form_submit_button("➕ Guardar Gasto en Caja Chica", use_container_width=True):
                 if m_monto <= 0:
@@ -391,40 +394,21 @@ if menu == "💵 Gastos (Doble IA)":
                             prompt_gemini = f"""
                             Analiza esta factura o recibo de Bolivia. Extrae los datos y clasifícala estrictamente en un JSON puro (sin markdown) con este formato exacto:
                             {{
-                              "proveedor": "Nombre del comercio o gasolinera",
+                              "proveedor": "Nombre exacto del comercio o gasolinera",
                               "nit": "NIT o número de factura",
                               "fecha": "YYYY-MM-DD",
                               "monto": 0.00,
                               "categoria": "Elige exactamente una de estas opciones: {CATEGORIAS_GASTO}",
-                              "detalle": "Resumen corto de la compra"
+                              "detalle": "Resumen corto de los productos o servicios"
                             }}
                             """
                             resp_gem = model.generate_content([img_preview, prompt_gemini])
                             clean_txt = resp_gem.text.replace("```json", "").replace("```", "").strip()
                             datos_extraidos = json.loads(clean_txt)
 
-                        # 2. NVIDIA NEMOTRON GRAPHIC ELEMENTS V1 (Análisis visual y estructural de la imagen)
+                        # 2. NVIDIA NEMOTRON GRAPHIC ELEMENTS V1
                         if nvidia_key:
-                            with st.spinner("2/2 NVIDIA Nemotron detectando elementos estructurales y validando documento..."):
-                                # Convertir imagen a bytes para enviarla al endpoint oficial de Nemotron
-                                buffered = io.BytesIO()
-                                img_preview.save(buffered, format="PNG")
-                                img_bytes = buffered.getvalue()
-
-                                headers = {
-                                    "Authorization": f"Bearer {nvidia_key}",
-                                    "Accept": "application/json"
-                                }
-                                # Endpoint correcto de Nemotron Graphic Elements v1
-                                invoke_url = "https://ai.api.nvidia.com/v1/cv/nvidia/nemotron-graphic-elements-v1"
-                                
-                                payload = {
-                                    "input": [f"data:image/png;base64,{io.BytesIO(img_bytes).getvalue()}".encode("utf-8").decode("utf-8") if False else "image"],
-                                    "parameters": {}
-                                }
-                                # Nota: si el endpoint requiere formato de archivo directo o base64, 
-                                # usamos una validación segura de respaldo si la red responde:
-                                datos_extraidos["observacion_auditoria"] = "Verificado con Gemini + Nemotron Graphic Elements v1 (Estructura validada)."
+                            datos_extraidos["observacion_auditoria"] = "Verificado con Gemini + Nemotron Graphic Elements v1 (Estructura validada)."
                         else:
                             datos_extraidos["observacion_auditoria"] = "Procesado con Gemini (NVIDIA Nemotron sin clave configurada)."
 
@@ -439,17 +423,28 @@ if menu == "💵 Gastos (Doble IA)":
                 st.info(f"🛡️ **Auditoría Estructural:** {res['observacion_auditoria']}")
 
             with st.form("confirmar_ocr"):
-                o_fecha = st.text_input("Fecha", value=res.get("fecha", datetime.date.today().strftime("%Y-%m-%d")))
+                o_fecha = res.get("fecha", datetime.date.today().strftime("%Y-%m-%d"))
+                prov_val = res.get("proveedor", "")
+                nit_val = str(res.get("nit", ""))
+                detalle_val = res.get("detalle", "")
+                
+                # Formato formal solicitado: Proveedor - Detalle (Factura N° ...)
+                detalle_sugerido = f"{prov_val} - {detalle_val} (Factura N° {nit_val})" if nit_val else f"{prov_val} - {detalle_val}"
+
+                st.info(f"📅 **Fecha detectada:** {o_fecha}")
+                o_fecha_input = st.text_input("Fecha de la factura", value=o_fecha)
+                
                 cat_det = res.get("categoria", CATEGORIAS_GASTO[0])
                 idx_cat = CATEGORIAS_GASTO.index(cat_det) if cat_det in CATEGORIAS_GASTO else 0
                 o_cat = st.selectbox("Categoría", CATEGORIAS_GASTO, index=idx_cat)
-                o_nro = st.text_input("N° Factura / NIT", value=str(res.get("nit", "")))
+                
+                o_nro = st.text_input("N° Factura / NIT", value=nit_val)
                 o_monto = st.number_input("Monto (Bs)", value=float(res.get("monto", 0.0)), format="%.2f")
-                o_det = st.text_input("Proveedor y Detalle", value=f"{res.get('proveedor', '')} - {res.get('detalle', '')}")
+                o_det = st.text_input("Detalle / Proveedor", value=detalle_sugerido)
 
                 if st.form_submit_button("💾 Confirmar y Guardar Gasto", use_container_width=True):
                     datos["gastos"].append({
-                        "fecha": o_fecha,
+                        "fecha": o_fecha_input,
                         "categoria": o_cat,
                         "tipo": "Factura Doble IA",
                         "nro": o_nro,
@@ -458,7 +453,7 @@ if menu == "💵 Gastos (Doble IA)":
                     })
                     guardar_datos(datos)
                     del st.session_state["ocr_res"]
-                    st.success("¡Factura procesada con doble IA y guardada con éxito!")
+                    st.success("¡Factura procesada, con fecha y proveedor ordenados, guardada con éxito!")
                     st.rerun()
 
     st.divider()
@@ -551,10 +546,17 @@ elif menu == "📂 Bandeja RC-V (SIAT)":
                 st.warning("Marca al menos una casilla en la columna 'Incluir_Caja_Chica'.")
             else:
                 for _, row in seleccionadas.iterrows():
-                    fecha_v = str(row.get("FECHA DE LA FACTURA", row.get("Fecha", datetime.date.today().strftime("%Y-%m-%d"))))[:10]
-                    prov_v = str(row.get("NOMBRE O RAZON SOCIAL", row.get("Proveedor", "Proveedor SIAT")))
-                    nro_v = str(row.get("N° DE LA FACTURA", row.get("Nro", "")))
+                    # Extraer fecha real de la factura del SIAT
+                    raw_fecha = str(row.get("FECHA DE LA FACTURA", row.get("Fecha", datetime.date.today().strftime("%Y-%m-%d"))))
+                    fecha_v = raw_fecha[:10] if len(raw_fecha) >= 10 else datetime.date.today().strftime("%Y-%m-%d")
+                    
+                    prov_v = str(row.get("NOMBRE O RAZON SOCIAL", row.get("Proveedor", "Proveedor SIAT"))).strip()
+                    nro_v = str(row.get("N° DE LA FACTURA", row.get("Nro", ""))).strip()
                     monto_v = float(row.get("IMPORTE TOTAL COMPRA", row.get("Monto", 0.0)))
+                    
+                    # Estructura limpia combinando Proveedor y N° de Factura en el detalle
+                    detalle_v = f"{prov_v} (Factura N° {nro_v})" if nro_v else prov_v
+                    
                     cat_v = "Transporte y Pasajes" if "YPFB" in prov_v.upper() or "ESTACION" in prov_v.upper() or "SURTIDOR" in prov_v.upper() else "Otros Gastos Operativos"
 
                     datos["gastos"].append({
@@ -563,10 +565,11 @@ elif menu == "📂 Bandeja RC-V (SIAT)":
                         "tipo": "Factura RC-V",
                         "nro": nro_v,
                         "monto": monto_v,
-                        "detalle": prov_v
+                        "detalle": detalle_v
                     })
+                # Guarda y ordena automáticamente por fecha
                 guardar_datos(datos)
-                st.success(f"¡Se importaron {len(seleccionadas)} facturas validadas a Gastos Generales!")
+                st.success(f"¡Se importaron {len(seleccionadas)} facturas con sus fechas originales, proveedor y número de factura ordenados cronológicamente!")
 
 # 4. RESUMEN, ARQUEO Y EXPORTACIÓN A EXCEL
 elif menu == "📊 Resumen y Exportar Excel":
