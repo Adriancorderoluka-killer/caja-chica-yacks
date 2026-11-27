@@ -7,12 +7,13 @@ import io
 import fitz  # PyMuPDF para leer PDFs como imagen
 import google.generativeai as genai
 from PIL import Image
+from openai import OpenAI
 import openpyxl
 from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
 from openpyxl.utils import get_column_letter
 
 st.set_page_config(
-    page_title="Control Caja Chica",
+    page_title="Control Caja Chica Yacks",
     page_icon="📋",
     layout="wide"
 )
@@ -77,7 +78,6 @@ def guardar_datos(datos):
 
 
 def obtener_api_key():
-    # Lee la clave desde los Secrets de Streamlit Cloud para no tener que pegarla nunca más
     if "GEMINI_API_KEY" in st.secrets:
         return st.secrets["GEMINI_API_KEY"]
     return st.session_state.get("api_key_manual", "")
@@ -325,23 +325,20 @@ datos = cargar_datos()
 
 st.title("📋 Control y Rendición de Caja Chica")
 
-# Configuración opcional de API Key en barra lateral solo si no está en Secrets
 with st.sidebar:
     st.header("Navegación")
     menu = st.radio(
         "Ir a:",
-        ["💵 Gastos (Manual y Foto/PDF)", "🍔 Control Almuerzos", "📂 Bandeja RC-V (SIAT)", "📊 Resumen y Exportar Excel"]
+        ["💵 Gastos (Manual y Doble IA)", "🍔 Control Almuerzos", "📂 Bandeja RC-V (SIAT)", "📊 Resumen y Exportar Excel"]
     )
     if "GEMINI_API_KEY" not in st.secrets:
         st.divider()
         st.caption("Configuración IA (Opcional)")
         st.session_state["api_key_manual"] = st.text_input("API Key Gemini:", type="password", value=st.session_state.get("api_key_manual", ""))
 
-# ------------------------------------------------------------------------------
-# 1. GASTOS GENERALES: REGISTRO MANUAL RÁPIDO + ESCÁNER OCR (FOTO / PDF)
-# ------------------------------------------------------------------------------
-if menu == "💵 Gastos (Manual y Foto/PDF)":
-    tab_manual, tab_ocr = st.tabs(["✍️ Registro Manual Rápido", "📸 Subir Foto o PDF (Lectura IA)"])
+# 1. GASTOS GENERALES: REGISTRO MANUAL + DOBLE IA (GEMINI + NVIDIA)
+if menu == "💵 Gastos (Manual y Doble IA)":
+    tab_manual, tab_ocr = st.tabs(["✍️ Registro Manual Rápido", "📸 Escanear con Doble IA (Gemini + NVIDIA)"])
 
     with tab_manual:
         st.subheader("Registrar Gasto Manualmente")
@@ -372,61 +369,105 @@ if menu == "💵 Gastos (Manual y Foto/PDF)":
                     st.success(f"Gasto registrado: Bs {m_monto:.2f} — {m_detalle}")
 
     with tab_ocr:
-        st.subheader("Escanear Factura o Recibo desde el Celular (Foto o PDF)")
+        st.subheader("Escanear Factura con Doble IA (Gemini Extrae + NVIDIA Audita)")
         archivo = st.file_uploader("Toma una foto o selecciona el PDF de la factura", type=["jpg", "jpeg", "png", "pdf"])
 
         if archivo:
             img_preview = convertir_archivo_a_imagen(archivo)
             st.image(img_preview, caption="Vista previa del comprobante", width=320)
 
-            if st.button("🔍 Extraer Datos Automáticamente con IA", use_container_width=True):
-                api_key = obtener_api_key()
-                if not api_key:
+            if st.button("🔍 Extraer y Auditar con Doble IA", use_container_width=True):
+                gemini_key = obtener_api_key()
+                nvidia_key = st.secrets.get("NVIDIA_API_KEY", "")
+
+                if not gemini_key:
                     st.error("Configura tu GEMINI_API_KEY en los Secrets de Streamlit Cloud o en la barra lateral.")
                 else:
                     try:
-                        genai.configure(api_key=api_key)
-                        model = genai.GenerativeModel("gemini-2.5-flash")
-                        prompt = """
-                        Extrae de esta factura o recibo de Bolivia los siguientes datos en JSON puro (sin markdown):
-                        {
-                          "proveedor": "Nombre del comercio o gasolinera",
-                          "nit": "NIT o número de factura",
-                          "fecha": "YYYY-MM-DD",
-                          "monto": 0.00,
-                          "categoria": "Elige exactamente una: Transporte y Pasajes, Material de Escritorio / Embalaje, Insumos de Limpieza, Ferretería y Mantenimiento, Otros Gastos Operativos",
-                          "detalle": "Resumen corto de la compra"
-                        }
-                        """
-                        with st.spinner("Leyendo factura..."):
-                            resp = model.generate_content([img_preview, prompt])
-                            clean_txt = resp.text.replace("```json", "").replace("```", "").strip()
-                            st.session_state["ocr_res"] = json.loads(clean_txt)
+                        # 1. GEMINI EXTRAE (Visión / OCR)
+                        with st.spinner("1/2 Gemini leyendo el comprobante visualmente..."):
+                            genai.configure(api_key=gemini_key)
+                            model = genai.GenerativeModel("gemini-3.8-flash")
+                            prompt_gemini = """
+                            Extrae de esta factura o recibo de Bolivia los siguientes datos en formato JSON puro (sin markdown):
+                            {
+                              "proveedor": "Nombre del comercio o gasolinera",
+                              "nit": "NIT o número de factura",
+                              "fecha": "YYYY-MM-DD",
+                              "monto": 0.00,
+                              "detalle": "Resumen de los productos o servicios comprados"
+                            }
+                            """
+                            resp_gem = model.generate_content([img_preview, prompt_gemini])
+                            datos_crudos = resp_gem.text.replace("```json", "").replace("```", "").strip()
+
+                        # 2. NVIDIA AUDITA Y CATEGORIZA (Lógica y control)
+                        if nvidia_key:
+                            with st.spinner("2/2 NVIDIA NIM auditando y clasificando el gasto..."):
+                                client_nv = OpenAI(
+                                    base_url="https://integrate.api.nvidia.com/v1",
+                                    api_key=nvidia_key
+                                )
+                                prompt_nvidia = f"""
+                                Eres un auditor contable experto en Bolivia. Revisa los datos extraídos de una factura:
+                                {datos_crudos}
+
+                                Tareas:
+                                1. Verifica y corrige si es necesario el formato de fecha (YYYY-MM-DD) y asegúrate de que el monto sea un número decimal.
+                                2. Asigna exactamente una categoría de esta lista permitida:
+                                   - Transporte y Pasajes
+                                   - Material de Escritorio / Embalaje
+                                   - Insumos de Limpieza
+                                   - Ferretería y Mantenimiento
+                                   - Otros Gastos Operativos
+                                3. Añade un campo llamado "observacion_auditoria" con una breve nota indicando si todo está correcto o si hay alguna alerta.
+
+                                Responde ÚNICAMENTE con un JSON válido que contenga: proveedor, nit, fecha, monto, categoria, detalle y observacion_auditoria. Sin texto adicional ni bloques markdown.
+                                """
+                                comp = client_nv.chat.completions.create(
+                                    model="meta/llama-3.3-70b-instruct",
+                                    messages=[{"role": "user", "content": prompt_nvidia}],
+                                    temperature=0.1,
+                                    max_tokens=512
+                                )
+                                clean_txt = comp.choices[0].message.content.replace("```json", "").replace("```", "").strip()
+                                st.session_state["ocr_res"] = json.loads(clean_txt)
+                        else:
+                            # Si no hay llave de NVIDIA, usa directo lo de Gemini con categoría por defecto
+                            parsed_g = json.loads(datos_crudos)
+                            parsed_g["categoria"] = "Otros Gastos Operativos"
+                            parsed_g["observacion_auditoria"] = "Procesado solo con Gemini (NVIDIA no configurado)."
+                            st.session_state["ocr_res"] = parsed_g
+
                     except Exception as e:
-                        st.error(f"No se pudo leer la imagen: {e}")
+                        st.error(f"Error en el procesamiento dual: {e}")
 
         if "ocr_res" in st.session_state:
             res = st.session_state["ocr_res"]
+            if res.get("observacion_auditoria"):
+                st.info(f"🛡️ **Auditoría NVIDIA:** {res['observacion_auditoria']}")
+
             with st.form("confirmar_ocr"):
-                st.info("Verifica los datos extraídos antes de guardar:")
                 o_fecha = st.text_input("Fecha", value=res.get("fecha", datetime.date.today().strftime("%Y-%m-%d")))
-                o_cat = st.selectbox("Categoría", CATEGORIAS_GASTO, index=CATEGORIAS_GASTO.index(res["categoria"]) if res.get("categoria") in CATEGORIAS_GASTO else 0)
+                cat_detectada = res.get("categoria", "Otros Gastos Operativos")
+                idx_cat = CATEGORIAS_GASTO.index(cat_detectada) if cat_detectada in CATEGORIAS_GASTO else 0
+                o_cat = st.selectbox("Categoría", CATEGORIAS_GASTO, index=idx_cat)
                 o_nro = st.text_input("N° Factura / NIT", value=str(res.get("nit", "")))
                 o_monto = st.number_input("Monto (Bs)", value=float(res.get("monto", 0.0)), format="%.2f")
                 o_det = st.text_input("Proveedor y Detalle", value=f"{res.get('proveedor', '')} - {res.get('detalle', '')}")
 
-                if st.form_submit_button("💾 Confirmar y Guardar Gasto", use_container_width=True):
+                if st.form_submit_button("💾 Confirmar y Guardar Gasto Auditado", use_container_width=True):
                     datos["gastos"].append({
                         "fecha": o_fecha,
                         "categoria": o_cat,
-                        "tipo": "Factura OCR",
+                        "tipo": "Factura Doble IA",
                         "nro": o_nro,
                         "monto": float(o_monto),
                         "detalle": o_det
                     })
                     guardar_datos(datos)
                     del st.session_state["ocr_res"]
-                    st.success("¡Factura guardada en caja chica!")
+                    st.success("¡Factura extraída, auditada y guardada en caja chica!")
                     st.rerun()
 
     st.divider()
@@ -434,15 +475,13 @@ if menu == "💵 Gastos (Manual y Foto/PDF)":
     if datos["gastos"]:
         df_g = pd.DataFrame(datos["gastos"])
         st.dataframe(df_g, use_container_width=True)
-        idx_borrar = st.number_input("Fila a eliminar (índice):", min_value=0, max_value=len(datos["gastos"]) - 1, step=1)
+        idx_borrar = st.number_input("Fila a eliminar (índice):", min_value=0, max_value=len(datos["gastos"]) - 1, step=1, key="del_gasto")
         if st.button("🗑️ Eliminar fila seleccionada"):
             datos["gastos"].pop(int(idx_borrar))
             guardar_datos(datos)
             st.rerun()
 
-# ------------------------------------------------------------------------------
 # 2. CONTROL DIARIO DE ALMUERZOS
-# ------------------------------------------------------------------------------
 elif menu == "🍔 Control Almuerzos":
     st.subheader("Control Diario de Almuerzos (Bs 15.00)")
     fecha_sel = st.date_input("Fecha de registro:", datetime.date.today())
@@ -504,9 +543,7 @@ elif menu == "🍔 Control Almuerzos":
         guardar_datos(datos)
         st.success(f"Guardado: {raciones_hoy} raciones — Total día: Bs {raciones_hoy * datos['config']['tarifa']:.2f}")
 
-# ------------------------------------------------------------------------------
 # 3. BANDEJA DE DEPURACIÓN RC-V (IMPUESTOS NACIONALES)
-# ------------------------------------------------------------------------------
 elif menu == "📂 Bandeja RC-V (SIAT)":
     st.subheader("Bandeja de Depuración RC-V (Impuestos Nacionales)")
     st.markdown("Sube el archivo Excel o CSV descargado del SIAT y marca **únicamente** las facturas que pagaste con caja chica.")
@@ -523,7 +560,6 @@ elif menu == "📂 Bandeja RC-V (SIAT)":
                 st.warning("Marca al menos una casilla en la columna 'Incluir_Caja_Chica'.")
             else:
                 for _, row in seleccionadas.iterrows():
-                    # Busca columnas típicas del SIAT de forma flexible
                     fecha_v = str(row.get("FECHA DE LA FACTURA", row.get("Fecha", datetime.date.today().strftime("%Y-%m-%d"))))[:10]
                     prov_v = str(row.get("NOMBRE O RAZON SOCIAL", row.get("Proveedor", "Proveedor SIAT")))
                     nro_v = str(row.get("N° DE LA FACTURA", row.get("Nro", "")))
@@ -541,9 +577,7 @@ elif menu == "📂 Bandeja RC-V (SIAT)":
                 guardar_datos(datos)
                 st.success(f"¡Se importaron {len(seleccionadas)} facturas validadas a Gastos Generales!")
 
-# ------------------------------------------------------------------------------
 # 4. RESUMEN, ARQUEO Y EXPORTACIÓN A EXCEL
-# ------------------------------------------------------------------------------
 elif menu == "📊 Resumen y Exportar Excel":
     st.subheader("Cierre Semanal, Arqueo y Descarga de Planilla")
     cfg = datos["config"]
@@ -560,7 +594,6 @@ elif menu == "📊 Resumen y Exportar Excel":
             guardar_datos(datos)
             st.success("Parámetros actualizados.")
 
-    # Cálculo semanal
     lunes = datetime.date.fromisoformat(cfg["fecha_inicio"])
     fechas_sem = [(lunes + datetime.timedelta(days=i)).strftime("%Y-%m-%d") for i in range(6)]
     raciones_sem = 0
