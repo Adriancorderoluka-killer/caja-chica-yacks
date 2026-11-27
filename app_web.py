@@ -487,7 +487,9 @@ if menu == "💵 Gastos (Doble IA)":
 # 2. CONTROL DIARIO DE ALMUERZOS
 elif menu == "🍔 Control Almuerzos":
     st.subheader("Control Diario de Almuerzos (Bs 15.00)")
-    fecha_sel = st.date_input("Fecha de registro de asistencia:", datetime.date.today(), key="fecha_almuerzo_sel")
+    
+    # Selector de fecha fuera de cualquier formulario para control directo
+    fecha_sel = st.date_input("Seleccionar Fecha de Asistencia:", datetime.date.today(), key="fecha_almuerzo_sel")
     fecha_str = fecha_sel.strftime("%Y-%m-%d")
     nombre_dia = DIAS_SEMANA[fecha_sel.weekday()]
     es_domingo = (nombre_dia == "DOMINGO")
@@ -501,53 +503,54 @@ elif menu == "🍔 Control Almuerzos":
 
     reg_dia = datos["asistencia"].get(fecha_str, {})
     
-    with st.form(f"form_almuerzos_{fecha_str}"):
-        nuevo_reg_dia = {}
-        raciones_hoy = 0
+    # Usamos campos interactivos directos con llaves basadas en fecha_str para evitar pérdida de estado
+    nuevo_reg_dia = {}
+    raciones_hoy = 0
 
-        for idx, p in enumerate(datos["personal"]):
-            nom = p["nombre"]
-            tipo = p.get("tipo", "PLANTA")
-            desc_fijo = p["descanso"]
-            prev = reg_dia.get(nom, {})
-            est_prev = prev.get("estado", "") if isinstance(prev, dict) else prev
-            obs_prev = prev.get("obs", "") if isinstance(prev, dict) else ""
+    for idx, p in enumerate(datos["personal"]):
+        nom = p["nombre"]
+        tipo = p.get("tipo", "PLANTA")
+        desc_fijo = p["descanso"]
+        prev = reg_dia.get(nom, {})
+        est_prev = prev.get("estado", "") if isinstance(prev, dict) else prev
+        obs_prev = prev.get("obs", "") if isinstance(prev, dict) else ""
 
-            if not est_prev:
-                if es_domingo:
-                    est_prev = "DESCANSO" if desc_fijo == "DOMINGO" else "POLLO (Bs 0)"
-                elif tipo == "APOYO":
-                    est_prev = "NO" if nombre_dia in ["JUEVES", "VIERNES", "SABADO"] else "NO APLICA"
-                elif desc_fijo == nombre_dia:
-                    est_prev = "DESCANSO"
-                else:
-                    est_prev = "NO"
-
-            cols = st.columns([2, 3, 2, 2] if mostrar_obs else [2, 4, 2])
-            cols[0].caption(f"{p['grupo']} | {p['cargo']}")
-            cols[1].markdown(f"**{nom}** *(Desc: {desc_fijo})*")
-
+        if not est_prev:
             if es_domingo:
-                cols[2].markdown(f"`{est_prev}`")
-                est_sel = est_prev
+                est_prev = "DESCANSO" if desc_fijo == "DOMINGO" else "POLLO (Bs 0)"
+            elif tipo == "APOYO":
+                est_prev = "NO" if nombre_dia in ["JUEVES", "VIERNES", "SABADO"] else "NO APLICA"
+            elif desc_fijo == nombre_dia:
+                est_prev = "DESCANSO"
             else:
-                opciones = ["SI (Bs 15)", "NO", "DESCANSO", "NO APLICA"] if tipo == "APOYO" else ["SI (Bs 15)", "NO", "DESCANSO"]
-                idx_op = opciones.index(est_prev) if est_prev in opciones else 1
-                est_sel = cols[2].selectbox("Estado", opciones, index=idx_op, key=f"est_{fecha_str}_{idx}")
+                est_prev = "NO"
 
-            obs_sel = obs_prev
-            if mostrar_obs:
-                obs_sel = cols[3].text_input("Motivo", value=obs_prev, placeholder="Ej. Reemplazo...", key=f"obs_{fecha_str}_{idx}")
+        cols = st.columns([2, 3, 2, 2] if mostrar_obs else [2, 4, 2])
+        cols[0].caption(f"{p['grupo']} | {p['cargo']}")
+        cols[1].markdown(f"**{nom}** *(Desc: {desc_fijo})*")
 
-            if est_sel == "SI (Bs 15)":
-                raciones_hoy += 1
-            nuevo_reg_dia[nom] = {"estado": est_sel, "obs": obs_sel}
+        if es_domingo:
+            cols[2].markdown(f"`{est_prev}`")
+            est_sel = est_prev
+        else:
+            opciones = ["SI (Bs 15)", "NO", "DESCANSO", "NO APLICA"] if tipo == "APOYO" else ["SI (Bs 15)", "NO", "DESCANSO"]
+            idx_op = opciones.index(est_prev) if est_prev in opciones else 1
+            # Llave única vinculada directamente a la fecha seleccionada
+            est_sel = cols[2].selectbox("Estado", opciones, index=idx_op, key=f"est_{fecha_str}_{idx}", label_visibility="collapsed")
 
-        if st.form_submit_button("💾 Guardar Asistencia del Día", type="primary", use_container_width=True):
-            datos["asistencia"][fecha_str] = nuevo_reg_dia
-            guardar_datos(datos)
-            st.success(f"¡Asistencia de {fecha_str} guardada correctamente! ({raciones_hoy} raciones)")
-            st.rerun()
+        obs_sel = obs_prev
+        if mostrar_obs:
+            obs_sel = cols[3].text_input("Motivo", value=obs_prev, placeholder="Ej. Reemplazo...", key=f"obs_{fecha_str}_{idx}", label_visibility="collapsed")
+
+        if est_sel == "SI (Bs 15)":
+            raciones_hoy += 1
+        nuevo_reg_dia[nom] = {"estado": est_sel, "obs": obs_sel}
+
+    st.markdown("---")
+    if st.button("💾 Guardar Asistencia del Día", type="primary", use_container_width=True):
+        datos["asistencia"][fecha_str] = nuevo_reg_dia
+        guardar_datos(datos)
+        st.success(f"¡Asistencia del día {fecha_str} guardada correctamente! ({raciones_hoy} raciones)")
 
 # 3. BANDEJA DE DEPURACIÓN RC-V (IMPUESTOS NACIONALES)
 elif menu == "📂 Bandeja RC-V (SIAT)":
