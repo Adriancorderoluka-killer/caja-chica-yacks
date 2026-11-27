@@ -73,9 +73,9 @@ def cargar_datos():
 
 
 def guardar_datos(datos):
-    # Ordena automáticamente todos los gastos por fecha ascendente cronológicamente
+    # ORDENAMIENTO CRONOLÓGICO AUTOMÁTICO POR FECHA (Ascendente)
     if "gastos" in datos:
-        datos["gastos"].sort(key=lambda x: x.get("fecha", ""))
+        datos["gastos"].sort(key=lambda x: str(x.get("fecha", "")))
     with open(DB_FILE, "w", encoding="utf-8") as f:
         json.dump(datos, f, ensure_ascii=False, indent=2)
 
@@ -368,8 +368,9 @@ if menu == "💵 Gastos (Doble IA)":
                         "monto": float(m_monto),
                         "detalle": m_detalle.strip()
                     })
+                    # SE ORDENA AUTOMÁTICAMENTE AL GUARDAR
                     guardar_datos(datos)
-                    st.success(f"Gasto registrado: Bs {m_monto:.2f} — {m_detalle}")
+                    st.success(f"Gasto registrado y ordenado cronológicamente: Bs {m_monto:.2f} — {m_detalle}")
 
     with tab_ocr:
         st.subheader("Escanear Factura con Gemini + NVIDIA Nemotron")
@@ -386,36 +387,56 @@ if menu == "💵 Gastos (Doble IA)":
                 if not gemini_key:
                     st.error("Configura tu GEMINI_API_KEY en los Secrets de Streamlit Cloud o en la barra lateral.")
                 else:
+                    progress_text = st.empty()
+                    progress_bar = st.progress(0)
+                    
                     try:
-                        # 1. GEMINI EXTRAE (OCR General)
-                        with st.spinner("1/2 Gemini leyendo los datos del comprobante..."):
-                            genai.configure(api_key=gemini_key)
-                            model = genai.GenerativeModel("gemini-3.8-flash")
-                            prompt_gemini = f"""
-                            Analiza esta factura o recibo de Bolivia. Extrae los datos y clasifícala estrictamente en un JSON puro (sin markdown) con este formato exacto:
-                            {{
-                              "proveedor": "Nombre exacto del comercio o gasolinera",
-                              "nit": "NIT o número de factura",
-                              "fecha": "YYYY-MM-DD",
-                              "monto": 0.00,
-                              "categoria": "Elige exactamente una de estas opciones: {CATEGORIAS_GASTO}",
-                              "detalle": "Resumen corto de los productos o servicios"
-                            }}
-                            """
-                            resp_gem = model.generate_content([img_preview, prompt_gemini])
-                            clean_txt = resp_gem.text.replace("```json", "").replace("```", "").strip()
-                            datos_extraidos = json.loads(clean_txt)
+                        progress_text.text("1/2 Conectando con Gemini AI...")
+                        progress_bar.progress(30)
+                        
+                        genai.configure(api_key=gemini_key)
+                        model = genai.GenerativeModel("gemini-3.8-flash")
+                        
+                        prompt_gemini = f"""
+                        Analiza esta factura o recibo de Bolivia. Extrae los datos y clasifícala estrictamente en un JSON puro (sin markdown) con este formato exacto:
+                        {{
+                          "proveedor": "Nombre exacto del comercio o gasolinera",
+                          "nit": "NIT o número de factura",
+                          "fecha": "YYYY-MM-DD",
+                          "monto": 0.00,
+                          "categoria": "Elige exactamente una de estas opciones: {CATEGORIAS_GASTO}",
+                          "detalle": "Resumen corto de los productos o servicios"
+                        }}
+                        """
+                        
+                        progress_text.text("2/2 Analizando imagen y extrayendo datos...")
+                        progress_bar.progress(70)
+                        
+                        resp_gem = model.generate_content([img_preview, prompt_gemini])
+                        
+                        if not resp_gem or not resp_gem.text:
+                            raise Exception("La IA no devolvió ninguna respuesta. Intenta con una foto más nítida.")
+                            
+                        clean_txt = resp_gem.text.replace("```json", "").replace("```", "").strip()
+                        datos_extraidos = json.loads(clean_txt)
 
-                        # 2. NVIDIA NEMOTRON GRAPHIC ELEMENTS V1
                         if nvidia_key:
                             datos_extraidos["observacion_auditoria"] = "Verificado con Gemini + Nemotron Graphic Elements v1 (Estructura validada)."
                         else:
                             datos_extraidos["observacion_auditoria"] = "Procesado con Gemini (NVIDIA Nemotron sin clave configurada)."
 
+                        progress_bar.progress(100)
+                        progress_text.empty()
+                        progress_bar.empty()
+                        
                         st.session_state["ocr_res"] = datos_extraidos
+                        st.success("¡Datos extraídos con éxito!")
+                        st.rerun()
 
                     except Exception as e:
-                        st.error(f"Error en el procesamiento dual: {e}")
+                        progress_text.empty()
+                        progress_bar.empty()
+                        st.error(f"Error al procesar la imagen: {e}")
 
         if "ocr_res" in st.session_state:
             res = st.session_state["ocr_res"]
@@ -450,9 +471,10 @@ if menu == "💵 Gastos (Doble IA)":
                         "monto": float(o_monto),
                         "detalle": o_det
                     })
+                    # SE ORDENA AUTOMÁTICAMENTE AL GUARDAR
                     guardar_datos(datos)
                     del st.session_state["ocr_res"]
-                    st.success("¡Factura procesada, con fecha y proveedor ordenados, guardada con éxito!")
+                    st.success("¡Factura procesada, ordenada cronológicamente y guardada con éxito!")
                     st.rerun()
 
     st.divider()
@@ -537,8 +559,6 @@ elif menu == "📂 Bandeja RC-V (SIAT)":
     if archivo_rcv:
         try:
             df_rcv = pd.read_excel(archivo_rcv) if not archivo_rcv.name.endswith(".csv") else pd.read_csv(archivo_rcv)
-            
-            # Limpiar y estandarizar nombres de columnas del SIAT
             df_rcv.columns = [str(c).strip().upper() for c in df_rcv.columns]
             
             if "INCLUIR_CAJA_CHICA" not in df_rcv.columns:
@@ -555,12 +575,10 @@ elif menu == "📂 Bandeja RC-V (SIAT)":
                 else:
                     importadas_count = 0
                     for _, row in seleccionadas.iterrows():
-                        # 1. Extraer fecha real adaptada al formato del SIAT ('FECHA DE FACTURA/DUI/DIM' o similar)
                         val_fecha = datetime.date.today().strftime("%Y-%m-%d")
                         for c_f in ["FECHA DE FACTURA/DUI/DIM", "FECHA DE LA FACTURA", "FECHA", "FECHA EMISION", "FEC_FAC"]:
                             if c_f in row and pd.notna(row[c_f]):
                                 raw_f = str(row[c_f]).strip()
-                                # Si viene en formato DD/MM/YYYY, convertir a YYYY-MM-DD para el orden cronológico
                                 if "/" in raw_f and len(raw_f) >= 10:
                                     partes = raw_f[:10].split("/")
                                     if len(partes) == 3:
@@ -571,21 +589,18 @@ elif menu == "📂 Bandeja RC-V (SIAT)":
                                     val_fecha = raw_f[:10]
                                 break
 
-                        # 2. Extraer el nombre real del Proveedor ('RAZON SOCIAL PROVEEDOR')
                         val_prov = "Proveedor SIAT"
                         for c_p in ["RAZON SOCIAL PROVEEDOR", "NOMBRE O RAZON SOCIAL", "RAZON SOCIAL", "PROVEEDOR", "CLIENTE/PROVEEDOR"]:
                             if c_p in row and pd.notna(row[c_p]):
                                 val_prov = str(row[c_p]).strip()
                                 break
 
-                        # 3. Extraer el número de factura ('NUMERO FACTURA')
                         val_nro = ""
                         for c_n in ["NUMERO FACTURA", "N° DE LA FACTURA", "NUMERO DE FACTURA", "NRO FACTURA", "FACTURA", "NRO"]:
                             if c_n in row and pd.notna(row[c_n]):
                                 val_nro = str(row[c_n]).strip()
                                 break
 
-                        # 4. Extraer el monto total de la compra ('IMPORTE TOTAL COMPRA')
                         val_monto = 0.0
                         for c_m in ["IMPORTE TOTAL COMPRA", "IMPORTE TOTAL", "MONTO", "TOTAL"]:
                             if c_m in row and pd.notna(row[c_m]):
@@ -595,10 +610,7 @@ elif menu == "📂 Bandeja RC-V (SIAT)":
                                     pass
                                 break
 
-                        # Categoría automática basada en gasolineras o generales
                         cat_v = "Transporte y Pasajes" if any(k in val_prov.upper() for k in ["YPFB", "ESTACION", "SURTIDOR", "GASOLINERA"]) else "Otros Gastos Operativos"
-                        
-                        # Formato formal en Detalle incluyendo Proveedor y N° de Factura
                         detalle_v = f"{val_prov} (Factura N° {val_nro})" if val_nro else val_prov
 
                         datos["gastos"].append({
@@ -611,9 +623,9 @@ elif menu == "📂 Bandeja RC-V (SIAT)":
                         })
                         importadas_count += 1
 
-                    # Guarda y ordena automáticamente por fecha cronológica ascendente
+                    # SE ORDENA AUTOMÁTICAMENTE AL GUARDAR
                     guardar_datos(datos)
-                    st.success(f"¡Se importaron {importadas_count} facturas con sus fechas reales, proveedores y números correctos!")
+                    st.success(f"¡Se importaron {importadas_count} facturas ordenadas cronológicamente!")
         except Exception as e:
             st.error(f"Error al leer el archivo RC-V: {e}")
 
