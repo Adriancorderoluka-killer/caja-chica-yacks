@@ -645,7 +645,7 @@ elif menu == "📊 Resumen y Exportar Excel":
             st.success("Parámetros actualizados.")
 
     lunes = datetime.date.fromisoformat(cfg["fecha_inicio"])
-    fechas_sem = [(lunes + datetime.timedelta(days=i)).strftime("%Y-%m-%d"] for i in range(6)]
+    fechas_sem = [(lunes + datetime.timedelta(days=i)).strftime("%Y-%m-%d") for i in range(6)]
     raciones_sem = 0
     for f_s in fechas_sem:
         for _, v in datos["asistencia"].get(f_s, {}).items():
