@@ -387,7 +387,7 @@ if menu == "💵 Gastos (Manual y Doble IA)":
                         # 1. GEMINI EXTRAE (Visión / OCR)
                         with st.spinner("1/2 Gemini leyendo el comprobante visualmente..."):
                             genai.configure(api_key=gemini_key)
-                            model = genai.GenerativeModel("gemini-1.5-flash")
+                            model = genai.GenerativeModel("gemini-3.8-flash")
                             prompt_gemini = """
                             Extrae de esta factura o recibo de Bolivia los siguientes datos en formato JSON puro (sin markdown ni comillas invertidas):
                             {
