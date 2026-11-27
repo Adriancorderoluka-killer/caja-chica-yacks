@@ -386,7 +386,7 @@ if menu == "💵 Gastos (Manual y Foto/PDF)":
                 else:
                     try:
                         genai.configure(api_key=api_key)
-                        model = genai.GenerativeModel("gemini-1.5-flash")
+                        model = genai.GenerativeModel("gemini-2.5-flash")
                         prompt = """
                         Extrae de esta factura o recibo de Bolivia los siguientes datos en JSON puro (sin markdown):
                         {
