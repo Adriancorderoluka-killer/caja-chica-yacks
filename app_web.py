@@ -73,7 +73,7 @@ def cargar_datos():
 
 
 def guardar_datos(datos):
-    # Ordena automáticamente todos los gastos por fecha ascendente
+    # Ordena automáticamente todos los gastos por fecha ascendente cronológicamente
     if "gastos" in datos:
         datos["gastos"].sort(key=lambda x: x.get("fecha", ""))
     with open(DB_FILE, "w", encoding="utf-8") as f:
@@ -428,7 +428,6 @@ if menu == "💵 Gastos (Doble IA)":
                 nit_val = str(res.get("nit", ""))
                 detalle_val = res.get("detalle", "")
                 
-                # Formato formal solicitado: Proveedor - Detalle (Factura N° ...)
                 detalle_sugerido = f"{prov_val} - {detalle_val} (Factura N° {nit_val})" if nit_val else f"{prov_val} - {detalle_val}"
 
                 st.info(f"📅 **Fecha detectada:** {o_fecha}")
@@ -536,40 +535,78 @@ elif menu == "📂 Bandeja RC-V (SIAT)":
 
     archivo_rcv = st.file_uploader("Seleccionar archivo RC-V (.xlsx o .csv)", type=["xlsx", "csv"])
     if archivo_rcv:
-        df_rcv = pd.read_csv(archivo_rcv) if archivo_rcv.name.endswith(".csv") else pd.read_excel(archivo_rcv)
-        df_rcv.insert(0, "Incluir_Caja_Chica", False)
-        df_editado = st.data_editor(df_rcv, use_container_width=True, num_rows="fixed")
+        try:
+            df_rcv = pd.read_csv(archivo_rcv) if archivo_rcv.name.endswith(".csv") else pd.read_excel(archivo_rcv)
+            
+            # Limpiar y estandarizar nombres de columnas del SIAT
+            df_rcv.columns = [str(c).strip().upper() for c in df_rcv.columns]
+            
+            if "INCLUIR_CAJA_CHICA" not in df_rcv.columns:
+                df_rcv.insert(0, "INCLUIR_CAJA_CHICA", False)
+                
+            df_editado = st.data_editor(df_rcv, use_container_width=True, num_rows="fixed")
 
-        if st.button("📥 Importar Facturas Marcadas a Gastos Generales"):
-            seleccionadas = df_editado[df_editado["Incluir_Caja_Chica"] == True]
-            if seleccionadas.empty:
-                st.warning("Marca al menos una casilla en la columna 'Incluir_Caja_Chica'.")
-            else:
-                for _, row in seleccionadas.iterrows():
-                    # Extraer fecha real de la factura del SIAT
-                    raw_fecha = str(row.get("FECHA DE LA FACTURA", row.get("Fecha", datetime.date.today().strftime("%Y-%m-%d"))))
-                    fecha_v = raw_fecha[:10] if len(raw_fecha) >= 10 else datetime.date.today().strftime("%Y-%m-%d")
-                    
-                    prov_v = str(row.get("NOMBRE O RAZON SOCIAL", row.get("Proveedor", "Proveedor SIAT"))).strip()
-                    nro_v = str(row.get("N° DE LA FACTURA", row.get("Nro", ""))).strip()
-                    monto_v = float(row.get("IMPORTE TOTAL COMPRA", row.get("Monto", 0.0)))
-                    
-                    # Estructura limpia combinando Proveedor y N° de Factura en el detalle
-                    detalle_v = f"{prov_v} (Factura N° {nro_v})" if nro_v else prov_v
-                    
-                    cat_v = "Transporte y Pasajes" if "YPFB" in prov_v.upper() or "ESTACION" in prov_v.upper() or "SURTIDOR" in prov_v.upper() else "Otros Gastos Operativos"
+            if st.button("📥 Importar Facturas Marcadas a Gastos Generales"):
+                col_sel = "INCLUIR_CAJA_CHICA" if "INCLUIR_CAJA_CHICA" in df_editado.columns else df_editado.columns[0]
+                seleccionadas = df_editado[df_editado[col_sel] == True]
+                
+                if seleccionadas.empty:
+                    st.warning("Marca al menos una casilla en la columna de selección.")
+                else:
+                    importadas_count = 0
+                    for _, row in seleccionadas.iterrows():
+                        # 1. Extraer fecha real de la factura del SIAT
+                        val_fecha = datetime.date.today().strftime("%Y-%m-%d")
+                        for c_f in ["FECHA DE LA FACTURA", "FECHA", "FECHA EMISION", "FEC_FAC"]:
+                            if c_f in row and pd.notna(row[c_f]):
+                                val_fecha = str(row[c_f])[:10]
+                                break
 
-                    datos["gastos"].append({
-                        "fecha": fecha_v,
-                        "categoria": cat_v,
-                        "tipo": "Factura RC-V",
-                        "nro": nro_v,
-                        "monto": monto_v,
-                        "detalle": detalle_v
-                    })
-                # Guarda y ordena automáticamente por fecha
-                guardar_datos(datos)
-                st.success(f"¡Se importaron {len(seleccionadas)} facturas con sus fechas originales, proveedor y número de factura ordenados cronológicamente!")
+                        # 2. Extraer el nombre real del Proveedor / Razón Social
+                        val_prov = "Proveedor SIAT"
+                        for c_p in ["NOMBRE O RAZON SOCIAL", "RAZON SOCIAL DEL PROVEEDOR", "RAZON SOCIAL", "PROVEEDOR", "CLIENTE/PROVEEDOR"]:
+                            if c_p in row and pd.notna(row[c_p]):
+                                val_prov = str(row[c_p]).strip()
+                                break
+
+                        # 3. Extraer el número de factura
+                        val_nro = ""
+                        for c_n in ["N° DE LA FACTURA", "NUMERO DE FACTURA", "NRO FACTURA", "FACTURA", "NRO"]:
+                            if c_n in row and pd.notna(row[c_n]):
+                                val_nro = str(row[c_n]).strip()
+                                break
+
+                        # 4. Extraer el monto total de la compra
+                        val_monto = 0.0
+                        for c_m in ["IMPORTE TOTAL COMPRA", "IMPORTE TOTAL", "MONTO", "TOTAL"]:
+                            if c_m in row and pd.notna(row[c_m]):
+                                try:
+                                    val_monto = float(str(row[c_m]).replace(",", ""))
+                                except:
+                                    pass
+                                break
+
+                        # Categoría automática basada en gasolineras o generales
+                        cat_v = "Transporte y Pasajes" if any(k in val_prov.upper() for k in ["YPFB", "ESTACION", "SURTIDOR", "GASOLINERA"]) else "Otros Gastos Operativos"
+                        
+                        # Formato formal en Detalle incluyendo Proveedor y N° de Factura
+                        detalle_v = f"{val_prov} (Factura N° {val_nro})" if val_nro else val_prov
+
+                        datos["gastos"].append({
+                            "fecha": val_fecha,
+                            "categoria": cat_v,
+                            "tipo": "Factura RC-V",
+                            "nro": val_nro,
+                            "monto": val_monto,
+                            "detalle": detalle_v
+                        })
+                        importadas_count += 1
+
+                    # Guarda y ordena automáticamente por fecha cronológica
+                    guardar_datos(datos)
+                    st.success(f"¡Se importaron {importadas_count} facturas con sus fechas originales, proveedor y número de factura!")
+        except Exception as e:
+            st.error(f"Error al leer el archivo RC-V: {e}")
 
 # 4. RESUMEN, ARQUEO Y EXPORTACIÓN A EXCEL
 elif menu == "📊 Resumen y Exportar Excel":
