@@ -536,7 +536,7 @@ elif menu == "📂 Bandeja RC-V (SIAT)":
     archivo_rcv = st.file_uploader("Seleccionar archivo RC-V (.xlsx o .csv)", type=["xlsx", "csv"])
     if archivo_rcv:
         try:
-            df_rcv = pd.read_csv(archivo_rcv) if archivo_rcv.name.endswith(".csv") else pd.read_excel(archivo_rcv)
+            df_rcv = pd.read_excel(archivo_rcv) if not archivo_rcv.name.endswith(".csv") else pd.read_csv(archivo_rcv)
             
             # Limpiar y estandarizar nombres de columnas del SIAT
             df_rcv.columns = [str(c).strip().upper() for c in df_rcv.columns]
@@ -555,28 +555,37 @@ elif menu == "📂 Bandeja RC-V (SIAT)":
                 else:
                     importadas_count = 0
                     for _, row in seleccionadas.iterrows():
-                        # 1. Extraer fecha real de la factura del SIAT
+                        # 1. Extraer fecha real adaptada al formato del SIAT ('FECHA DE FACTURA/DUI/DIM' o similar)
                         val_fecha = datetime.date.today().strftime("%Y-%m-%d")
-                        for c_f in ["FECHA DE LA FACTURA", "FECHA", "FECHA EMISION", "FEC_FAC"]:
+                        for c_f in ["FECHA DE FACTURA/DUI/DIM", "FECHA DE LA FACTURA", "FECHA", "FECHA EMISION", "FEC_FAC"]:
                             if c_f in row and pd.notna(row[c_f]):
-                                val_fecha = str(row[c_f])[:10]
+                                raw_f = str(row[c_f]).strip()
+                                # Si viene en formato DD/MM/YYYY, convertir a YYYY-MM-DD para el orden cronológico
+                                if "/" in raw_f and len(raw_f) >= 10:
+                                    partes = raw_f[:10].split("/")
+                                    if len(partes) == 3:
+                                        val_fecha = f"{partes[2]}-{partes[1]}-{partes[0]}"
+                                    else:
+                                        val_fecha = raw_f[:10]
+                                else:
+                                    val_fecha = raw_f[:10]
                                 break
 
-                        # 2. Extraer el nombre real del Proveedor / Razón Social
+                        # 2. Extraer el nombre real del Proveedor ('RAZON SOCIAL PROVEEDOR')
                         val_prov = "Proveedor SIAT"
-                        for c_p in ["NOMBRE O RAZON SOCIAL", "RAZON SOCIAL DEL PROVEEDOR", "RAZON SOCIAL", "PROVEEDOR", "CLIENTE/PROVEEDOR"]:
+                        for c_p in ["RAZON SOCIAL PROVEEDOR", "NOMBRE O RAZON SOCIAL", "RAZON SOCIAL", "PROVEEDOR", "CLIENTE/PROVEEDOR"]:
                             if c_p in row and pd.notna(row[c_p]):
                                 val_prov = str(row[c_p]).strip()
                                 break
 
-                        # 3. Extraer el número de factura
+                        # 3. Extraer el número de factura ('NUMERO FACTURA')
                         val_nro = ""
-                        for c_n in ["N° DE LA FACTURA", "NUMERO DE FACTURA", "NRO FACTURA", "FACTURA", "NRO"]:
+                        for c_n in ["NUMERO FACTURA", "N° DE LA FACTURA", "NUMERO DE FACTURA", "NRO FACTURA", "FACTURA", "NRO"]:
                             if c_n in row and pd.notna(row[c_n]):
                                 val_nro = str(row[c_n]).strip()
                                 break
 
-                        # 4. Extraer el monto total de la compra
+                        # 4. Extraer el monto total de la compra ('IMPORTE TOTAL COMPRA')
                         val_monto = 0.0
                         for c_m in ["IMPORTE TOTAL COMPRA", "IMPORTE TOTAL", "MONTO", "TOTAL"]:
                             if c_m in row and pd.notna(row[c_m]):
@@ -602,9 +611,9 @@ elif menu == "📂 Bandeja RC-V (SIAT)":
                         })
                         importadas_count += 1
 
-                    # Guarda y ordena automáticamente por fecha cronológica
+                    # Guarda y ordena automáticamente por fecha cronológica ascendente
                     guardar_datos(datos)
-                    st.success(f"¡Se importaron {importadas_count} facturas con sus fechas originales, proveedor y número de factura!")
+                    st.success(f"¡Se importaron {importadas_count} facturas con sus fechas reales, proveedores y números correctos!")
         except Exception as e:
             st.error(f"Error al leer el archivo RC-V: {e}")
 
