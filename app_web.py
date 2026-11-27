@@ -7,7 +7,6 @@ import io
 import fitz  # PyMuPDF para leer PDFs como imagen
 import google.generativeai as genai
 from PIL import Image
-import requests
 import openpyxl
 from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
 from openpyxl.utils import get_column_letter
@@ -73,7 +72,6 @@ def cargar_datos():
 
 
 def guardar_datos(datos):
-    # ORDENAMIENTO CRONOLÓGICO AUTOMÁTICO POR FECHA (Ascendente)
     if "gastos" in datos:
         datos["gastos"].sort(key=lambda x: str(x.get("fecha", "")))
     with open(DB_FILE, "w", encoding="utf-8") as f:
@@ -368,7 +366,6 @@ if menu == "💵 Gastos (Doble IA)":
                         "monto": float(m_monto),
                         "detalle": m_detalle.strip()
                     })
-                    # SE ORDENA AUTOMÁTICAMENTE AL GUARDAR
                     guardar_datos(datos)
                     st.success(f"Gasto registrado y ordenado cronológicamente: Bs {m_monto:.2f} — {m_detalle}")
 
@@ -395,7 +392,7 @@ if menu == "💵 Gastos (Doble IA)":
                         progress_bar.progress(30)
                         
                         genai.configure(api_key=gemini_key)
-                        model = genai.GenerativeModel("gemini-3.8-flash")
+                        model = genai.GenerativeModel("gemini-1.5-flash")
                         
                         prompt_gemini = f"""
                         Analiza esta factura o recibo de Bolivia. Extrae los datos y clasifícala estrictamente en un JSON puro (sin markdown) con este formato exacto:
@@ -471,7 +468,6 @@ if menu == "💵 Gastos (Doble IA)":
                         "monto": float(o_monto),
                         "detalle": o_det
                     })
-                    # SE ORDENA AUTOMÁTICAMENTE AL GUARDAR
                     guardar_datos(datos)
                     del st.session_state["ocr_res"]
                     st.success("¡Factura procesada, ordenada cronológicamente y guardada con éxito!")
@@ -491,7 +487,7 @@ if menu == "💵 Gastos (Doble IA)":
 # 2. CONTROL DIARIO DE ALMUERZOS
 elif menu == "🍔 Control Almuerzos":
     st.subheader("Control Diario de Almuerzos (Bs 15.00)")
-    fecha_sel = st.date_input("Fecha de registro:", datetime.date.today())
+    fecha_sel = st.date_input("Fecha de registro de asistencia:", datetime.date.today(), key="fecha_almuerzo_sel")
     fecha_str = fecha_sel.strftime("%Y-%m-%d")
     nombre_dia = DIAS_SEMANA[fecha_sel.weekday()]
     es_domingo = (nombre_dia == "DOMINGO")
@@ -504,51 +500,54 @@ elif menu == "🍔 Control Almuerzos":
     mostrar_obs = st.toggle("📝 Mostrar casillas de observación / motivo de apoyo (para reemplazos o permisos)", value=False)
 
     reg_dia = datos["asistencia"].get(fecha_str, {})
-    nuevo_reg_dia = {}
-    raciones_hoy = 0
+    
+    with st.form(f"form_almuerzos_{fecha_str}"):
+        nuevo_reg_dia = {}
+        raciones_hoy = 0
 
-    for idx, p in enumerate(datos["personal"]):
-        nom = p["nombre"]
-        tipo = p.get("tipo", "PLANTA")
-        desc_fijo = p["descanso"]
-        prev = reg_dia.get(nom, {})
-        est_prev = prev.get("estado", "") if isinstance(prev, dict) else prev
-        obs_prev = prev.get("obs", "") if isinstance(prev, dict) else ""
+        for idx, p in enumerate(datos["personal"]):
+            nom = p["nombre"]
+            tipo = p.get("tipo", "PLANTA")
+            desc_fijo = p["descanso"]
+            prev = reg_dia.get(nom, {})
+            est_prev = prev.get("estado", "") if isinstance(prev, dict) else prev
+            obs_prev = prev.get("obs", "") if isinstance(prev, dict) else ""
 
-        if not est_prev:
+            if not est_prev:
+                if es_domingo:
+                    est_prev = "DESCANSO" if desc_fijo == "DOMINGO" else "POLLO (Bs 0)"
+                elif tipo == "APOYO":
+                    est_prev = "NO" if nombre_dia in ["JUEVES", "VIERNES", "SABADO"] else "NO APLICA"
+                elif desc_fijo == nombre_dia:
+                    est_prev = "DESCANSO"
+                else:
+                    est_prev = "NO"
+
+            cols = st.columns([2, 3, 2, 2] if mostrar_obs else [2, 4, 2])
+            cols[0].caption(f"{p['grupo']} | {p['cargo']}")
+            cols[1].markdown(f"**{nom}** *(Desc: {desc_fijo})*")
+
             if es_domingo:
-                est_prev = "DESCANSO" if desc_fijo == "DOMINGO" else "POLLO (Bs 0)"
-            elif tipo == "APOYO":
-                est_prev = "NO" if nombre_dia in ["JUEVES", "VIERNES", "SABADO"] else "NO APLICA"
-            elif desc_fijo == nombre_dia:
-                est_prev = "DESCANSO"
+                cols[2].markdown(f"`{est_prev}`")
+                est_sel = est_prev
             else:
-                est_prev = "NO"
+                opciones = ["SI (Bs 15)", "NO", "DESCANSO", "NO APLICA"] if tipo == "APOYO" else ["SI (Bs 15)", "NO", "DESCANSO"]
+                idx_op = opciones.index(est_prev) if est_prev in opciones else 1
+                est_sel = cols[2].selectbox("Estado", opciones, index=idx_op, key=f"est_{fecha_str}_{idx}")
 
-        cols = st.columns([2, 3, 2, 2] if mostrar_obs else [2, 4, 2])
-        cols[0].caption(f"{p['grupo']} | {p['cargo']}")
-        cols[1].markdown(f"**{nom}** *(Desc: {desc_fijo})*")
+            obs_sel = obs_prev
+            if mostrar_obs:
+                obs_sel = cols[3].text_input("Motivo", value=obs_prev, placeholder="Ej. Reemplazo...", key=f"obs_{fecha_str}_{idx}")
 
-        if es_domingo:
-            cols[2].markdown(f"`{est_prev}`")
-            est_sel = est_prev
-        else:
-            opciones = ["SI (Bs 15)", "NO", "DESCANSO", "NO APLICA"] if tipo == "APOYO" else ["SI (Bs 15)", "NO", "DESCANSO"]
-            idx_op = opciones.index(est_prev) if est_prev in opciones else 1
-            est_sel = cols[2].selectbox("Estado", opciones, index=idx_op, key=f"est_{fecha_str}_{idx}", label_visibility="collapsed")
+            if est_sel == "SI (Bs 15)":
+                raciones_hoy += 1
+            nuevo_reg_dia[nom] = {"estado": est_sel, "obs": obs_sel}
 
-        obs_sel = obs_prev
-        if mostrar_obs:
-            obs_sel = cols[3].text_input("Motivo", value=obs_prev, placeholder="Ej. Reemplazo...", key=f"obs_{fecha_str}_{idx}", label_visibility="collapsed")
-
-        if est_sel == "SI (Bs 15)":
-            raciones_hoy += 1
-        nuevo_reg_dia[nom] = {"estado": est_sel, "obs": obs_sel}
-
-    if st.button("💾 Guardar Asistencia del Día", type="primary", use_container_width=True):
-        datos["asistencia"][fecha_str] = nuevo_reg_dia
-        guardar_datos(datos)
-        st.success(f"Guardado: {raciones_hoy} raciones — Total día: Bs {raciones_hoy * datos['config']['tarifa']:.2f}")
+        if st.form_submit_button("💾 Guardar Asistencia del Día", type="primary", use_container_width=True):
+            datos["asistencia"][fecha_str] = nuevo_reg_dia
+            guardar_datos(datos)
+            st.success(f"¡Asistencia de {fecha_str} guardada correctamente! ({raciones_hoy} raciones)")
+            st.rerun()
 
 # 3. BANDEJA DE DEPURACIÓN RC-V (IMPUESTOS NACIONALES)
 elif menu == "📂 Bandeja RC-V (SIAT)":
@@ -623,7 +622,6 @@ elif menu == "📂 Bandeja RC-V (SIAT)":
                         })
                         importadas_count += 1
 
-                    # SE ORDENA AUTOMÁTICAMENTE AL GUARDAR
                     guardar_datos(datos)
                     st.success(f"¡Se importaron {importadas_count} facturas ordenadas cronológicamente!")
         except Exception as e:
@@ -647,7 +645,7 @@ elif menu == "📊 Resumen y Exportar Excel":
             st.success("Parámetros actualizados.")
 
     lunes = datetime.date.fromisoformat(cfg["fecha_inicio"])
-    fechas_sem = [(lunes + datetime.timedelta(days=i)).strftime("%Y-%m-%d") for i in range(6)]
+    fechas_sem = [(lunes + datetime.timedelta(days=i)).strftime("%Y-%m-%d"] for i in range(6)]
     raciones_sem = 0
     for f_s in fechas_sem:
         for _, v in datos["asistencia"].get(f_s, {}).items():
