@@ -488,7 +488,6 @@ if menu == "💵 Gastos (Doble IA)":
 elif menu == "🍔 Control Almuerzos":
     st.subheader("Control Diario de Almuerzos (Bs 15.00)")
     
-    # Selector de fecha fuera de cualquier formulario para control directo
     fecha_sel = st.date_input("Seleccionar Fecha de Asistencia:", datetime.date.today(), key="fecha_almuerzo_sel")
     fecha_str = fecha_sel.strftime("%Y-%m-%d")
     nombre_dia = DIAS_SEMANA[fecha_sel.weekday()]
@@ -502,8 +501,6 @@ elif menu == "🍔 Control Almuerzos":
     mostrar_obs = st.toggle("📝 Mostrar casillas de observación / motivo de apoyo (para reemplazos o permisos)", value=False)
 
     reg_dia = datos["asistencia"].get(fecha_str, {})
-    
-    # Usamos campos interactivos directos con llaves basadas en fecha_str para evitar pérdida de estado
     nuevo_reg_dia = {}
     raciones_hoy = 0
 
@@ -535,7 +532,6 @@ elif menu == "🍔 Control Almuerzos":
         else:
             opciones = ["SI (Bs 15)", "NO", "DESCANSO", "NO APLICA"] if tipo == "APOYO" else ["SI (Bs 15)", "NO", "DESCANSO"]
             idx_op = opciones.index(est_prev) if est_prev in opciones else 1
-            # Llave única vinculada directamente a la fecha seleccionada
             est_sel = cols[2].selectbox("Estado", opciones, index=idx_op, key=f"est_{fecha_str}_{idx}", label_visibility="collapsed")
 
         obs_sel = obs_prev
@@ -646,15 +642,36 @@ elif menu == "📊 Resumen y Exportar Excel":
         if st.button("Guardar Parámetros"):
             guardar_datos(datos)
             st.success("Parámetros actualizados.")
+            st.rerun()
 
     lunes = datetime.date.fromisoformat(cfg["fecha_inicio"])
     fechas_sem = [(lunes + datetime.timedelta(days=i)).strftime("%Y-%m-%d") for i in range(6)]
+
     raciones_sem = 0
     for f_s in fechas_sem:
         for _, v in datos["asistencia"].get(f_s, {}).items():
             est = v.get("estado", "") if isinstance(v, dict) else v
             if est == "SI (Bs 15)":
                 raciones_sem += 1
+
+    # Alerta automática si hay almuerzos guardados fuera de la semana configurada
+    fechas_con_datos = [
+        f for f, reg in datos["asistencia"].items()
+        if any((v.get("estado", "") if isinstance(v, dict) else v) == "SI (Bs 15)" for v in reg.values())
+    ]
+    fechas_fuera = [f for f in fechas_con_datos if f not in fechas_sem]
+
+    if fechas_fuera:
+        st.warning(
+            f"⚠️ Tienes almuerzos guardados en fechas fuera de la semana configurada ({fechas_sem[0]} al {fechas_sem[-1]}): "
+            f"**{', '.join(sorted(fechas_fuera))}**."
+        )
+        if st.button("🔄 Ajustar semana del reporte automáticamente a las fechas guardadas"):
+            primera_fecha = datetime.date.fromisoformat(min(fechas_con_datos))
+            nuevo_lunes = primera_fecha - datetime.timedelta(days=primera_fecha.weekday())
+            cfg["fecha_inicio"] = nuevo_lunes.strftime("%Y-%m-%d")
+            guardar_datos(datos)
+            st.rerun()
 
     total_alm = raciones_sem * float(cfg["tarifa"])
     total_gas = sum(g["monto"] for g in datos["gastos"])
