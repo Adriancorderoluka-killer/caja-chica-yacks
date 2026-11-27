@@ -4,3 +4,4 @@ openpyxl
 google-generativeai
 pillow
 pymupdf
+openai
