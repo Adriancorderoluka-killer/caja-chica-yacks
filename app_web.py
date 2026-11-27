@@ -387,9 +387,9 @@ if menu == "💵 Gastos (Manual y Doble IA)":
                         # 1. GEMINI EXTRAE (Visión / OCR)
                         with st.spinner("1/2 Gemini leyendo el comprobante visualmente..."):
                             genai.configure(api_key=gemini_key)
-                            model = genai.GenerativeModel("gemini-3.8-flash")
+                            model = genai.GenerativeModel("gemini-1.5-flash")
                             prompt_gemini = """
-                            Extrae de esta factura o recibo de Bolivia los siguientes datos en formato JSON puro (sin markdown):
+                            Extrae de esta factura o recibo de Bolivia los siguientes datos en formato JSON puro (sin markdown ni comillas invertidas):
                             {
                               "proveedor": "Nombre del comercio o gasolinera",
                               "nit": "NIT o número de factura",
@@ -433,10 +433,9 @@ if menu == "💵 Gastos (Manual y Doble IA)":
                                 clean_txt = comp.choices[0].message.content.replace("```json", "").replace("```", "").strip()
                                 st.session_state["ocr_res"] = json.loads(clean_txt)
                         else:
-                            # Si no hay llave de NVIDIA, usa directo lo de Gemini con categoría por defecto
                             parsed_g = json.loads(datos_crudos)
                             parsed_g["categoria"] = "Otros Gastos Operativos"
-                            parsed_g["observacion_auditoria"] = "Procesado solo con Gemini (NVIDIA no configurado)."
+                            parsed_g["observacion_auditoria"] = "Procesado solo con Gemini (NVIDIA no configurado en Secrets)."
                             st.session_state["ocr_res"] = parsed_g
 
                     except Exception as e:
